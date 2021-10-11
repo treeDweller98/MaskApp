@@ -10,6 +10,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.MediaStore;
+import android.util.Log;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ImageView;
@@ -19,11 +20,13 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import org.tensorflow.lite.DataType;
 import org.tensorflow.lite.Interpreter;
+import org.tensorflow.lite.support.common.FileUtil;
 import org.tensorflow.lite.support.image.ImageProcessor;
 import org.tensorflow.lite.support.image.TensorImage;
 import org.tensorflow.lite.support.image.ops.ResizeOp;
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer;
 
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.MappedByteBuffer;
@@ -35,8 +38,6 @@ public class MainActivity extends AppCompatActivity {
 
     Interpreter tflite;
     ImageProcessor imageProcessor;
-    TensorImage tensorImage;
-    TensorBuffer probabilityBuffer;
     Bitmap bitmap;
 
     @Override
@@ -56,18 +57,15 @@ public class MainActivity extends AppCompatActivity {
             // Load tflite object from model file
             try {
                 tflite = new Interpreter(loadModelFile());
-            } catch (Exception ex) {
-                ex.printStackTrace();
+            } catch ( Exception e ) {
+                TextView textView = findViewById(R.id.result_text);
+                textView.setText( "tensorflow-lite model is not found/loaded" );
             }
 
-            // For input
+            // For input processing later on
             imageProcessor = new ImageProcessor.Builder()
                     .add(new ResizeOp(224, 224, ResizeOp.ResizeMethod.BILINEAR))
                     .build();
-            tensorImage = new TensorImage(DataType.UINT8);
-
-            // For holding output
-            probabilityBuffer = TensorBuffer.createFixedSize(new int[]{1, 2}, DataType.UINT8);
         }
 
         // Loading images
@@ -87,7 +85,6 @@ public class MainActivity extends AppCompatActivity {
 
         // Running model
         detectButton.setOnClickListener(new View.OnClickListener() {
-
             @Override
             public void onClick(View arg0) {
                 //Getting the image from the image view
@@ -97,28 +94,32 @@ public class MainActivity extends AppCompatActivity {
                 // Run model
                 doInference();
             }
-
         });
     }
 
     public void doInference() {
-        // Process image before feeding into model
-        tensorImage.load( bitmap );
-        tensorImage = imageProcessor.process( tensorImage );
-
-        // Run model
-        tflite.run( tensorImage.getBuffer() , probabilityBuffer.getBuffer() );
-
-        // Output True if wearing mask
-        int[] resArr = probabilityBuffer.getIntArray();
-        boolean myResult = ( resArr[0] <= resArr[1] );                   // 0 is no-mask
-
-        // Print result
         TextView textView = findViewById(R.id.result_text);
-        if ( myResult ) {
-            textView.setText( "Yay masks" );
+        if ( bitmap != null ) {
+
+            // Process image before feeding into model
+            TensorImage tensorImage = new TensorImage(DataType.UINT8);
+            tensorImage.load( bitmap );
+            tensorImage = imageProcessor.process( tensorImage );
+
+            // To hold the output
+            TensorBuffer probabilityBuffer = TensorBuffer.createFixedSize(new int[]{1, 2}, DataType.UINT8);
+
+            // Run model
+            tflite.run( tensorImage.getBuffer() , probabilityBuffer.getBuffer() );
+
+            // Output True if wearing mask
+            int[] resArr = probabilityBuffer.getIntArray();
+            boolean myResult = ( resArr[0] <= resArr[1] );                   // 0 is no-mask
+
+            // Print result
+            textView.setText( myResult ? "Yes mask" : "No mask" );
         } else {
-            textView.setText( "subject is probably a cunt" );
+            textView.setText( "Please select a new image" );
         }
     }
 
@@ -145,15 +146,13 @@ public class MainActivity extends AppCompatActivity {
             //Setting the URI so we can read the Bitmap from the image
             imageView.setImageURI(null);
             imageView.setImageURI(selectedImage);
-
-
         }
     }
 
-    /** Memory-map the model file in Assets */
+    /** Memory-map the model file in Assets*/
     private MappedByteBuffer loadModelFile() throws IOException {
         // Open model using input stream and memory map it to load
-        AssetFileDescriptor fileDescriptor = this.getAssets().openFd( "mask.tflite");
+        AssetFileDescriptor fileDescriptor = this.getAssets().openFd( "mask_tflite_quantized/model.tflite");
         FileInputStream inputStream = new FileInputStream( fileDescriptor.getFileDescriptor() );
         FileChannel fileChannel = inputStream.getChannel();
         long startOffset = fileDescriptor.getStartOffset();

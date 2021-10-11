@@ -1,12 +1,11 @@
 package com.example.maskapp;
 
-import androidx.appcompat.app.AppCompatActivity;
-
 import android.content.Intent;
 import android.content.res.AssetFileDescriptor;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.drawable.BitmapDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -15,6 +14,8 @@ import android.view.View;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.TextView;
+
+import androidx.appcompat.app.AppCompatActivity;
 
 import org.tensorflow.lite.DataType;
 import org.tensorflow.lite.Interpreter;
@@ -32,10 +33,6 @@ import java.nio.channels.FileChannel;
 public class MainActivity extends AppCompatActivity {
     private static final int RESULT_LOAD_IMAGE = 1;
 
-    TextView resultText;
-    Button inferBtn;
-    ImageView imageView;
-
     Interpreter tflite;
     ImageProcessor imageProcessor;
     TensorImage tensorImage;
@@ -47,57 +44,64 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
+        Button buttonLoadImage = findViewById(R.id.button);
+        Button detectButton = (Button) findViewById(R.id.detect);
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            requestPermissions(new String[]  {android.Manifest.permission.READ_EXTERNAL_STORAGE}, 1);
+            requestPermissions(new String[]{android.Manifest.permission.READ_EXTERNAL_STORAGE}, 1);
         }
 
-        Button buttonLoadImage = (Button) findViewById(R.id.button);
-        buttonLoadImage.setOnClickListener( new View.OnClickListener() {
+        // Prepare the model and stuff for use
+        {
+            // Load tflite object from model file
+            try {
+                tflite = new Interpreter(loadModelFile());
+            } catch (Exception ex) {
+                ex.printStackTrace();
+            }
+
+            // For input
+            imageProcessor = new ImageProcessor.Builder()
+                    .add(new ResizeOp(224, 224, ResizeOp.ResizeMethod.BILINEAR))
+                    .build();
+            tensorImage = new TensorImage(DataType.UINT8);
+
+            // For holding output
+            probabilityBuffer = TensorBuffer.createFixedSize(new int[]{1, 2}, DataType.UINT8);
+        }
+
+        // Loading images
+        buttonLoadImage.setOnClickListener(new View.OnClickListener() {
 
             @Override
             public void onClick(View arg0) {
-                resultText = findViewById( R.id.resultTxt );
-                resultText.setText("");
+                TextView textView = findViewById(R.id.result_text);
+                textView.setText("");
                 Intent i = new Intent(
                         Intent.ACTION_PICK,
                         MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
 
                 startActivityForResult(i, RESULT_LOAD_IMAGE);
             }
+        });
 
-        } );
+        // Running model
+        detectButton.setOnClickListener(new View.OnClickListener() {
 
-        inferBtn = (Button) findViewById( R.id.inferBtn );
+            @Override
+            public void onClick(View arg0) {
+                //Getting the image from the image view
+                ImageView imageView = (ImageView) findViewById(R.id.image);
+                bitmap = ((BitmapDrawable) imageView.getDrawable()).getBitmap();
 
-        // Load tflite object from model file
-        try {
-            tflite = new Interpreter( loadModelFile() );
-        } catch ( Exception ex ) {
-            ex.printStackTrace();
-        }
+                // Run model
+                doInference();
+            }
 
-        // For input
-        imageProcessor = new ImageProcessor.Builder()
-                            .add(new ResizeOp(224, 224, ResizeOp.ResizeMethod.BILINEAR ) )
-                            .build();
-        tensorImage = new TensorImage( DataType.UINT8 );
-
-        // For holding output
-        probabilityBuffer = TensorBuffer.createFixedSize( new int[]{1, 2}, DataType.UINT8 );
+        });
     }
 
-    public void inferBtnOnClick( View v ) {
-        if ( bitmap == null ) {
-            return;
-        } else if ( doInference() ) {
-            resultText.setText( "Yay masks" );
-        } else {
-            resultText.setText( "You're probably a cunt" );
-        }
-    }
-
-    public boolean doInference() {
-
+    public void doInference() {
         // Process image before feeding into model
         tensorImage.load( bitmap );
         tensorImage = imageProcessor.process( tensorImage );
@@ -107,7 +111,15 @@ public class MainActivity extends AppCompatActivity {
 
         // Output True if wearing mask
         int[] resArr = probabilityBuffer.getIntArray();
-        return ( resArr[0] <= resArr[1] );                   // 0 is no-mask
+        boolean myResult = ( resArr[0] <= resArr[1] );                   // 0 is no-mask
+
+        // Print result
+        TextView textView = findViewById(R.id.result_text);
+        if ( myResult ) {
+            textView.setText( "Yay masks" );
+        } else {
+            textView.setText( "subject is probably a cunt" );
+        }
     }
 
     @Override
@@ -119,21 +131,22 @@ public class MainActivity extends AppCompatActivity {
             Uri selectedImage = data.getData();
             String[] filePathColumn = { MediaStore.Images.Media.DATA };
 
-            Cursor cursor = getContentResolver().query( selectedImage,
-                    filePathColumn, null, null, null );
+            Cursor cursor = getContentResolver().query(selectedImage,
+                    filePathColumn, null, null, null);
             cursor.moveToFirst();
 
             int columnIndex = cursor.getColumnIndex(filePathColumn[0]);
             String picturePath = cursor.getString(columnIndex);
             cursor.close();
 
-            imageView = (ImageView) findViewById(R.id.image);
-            imageView.setImageBitmap( BitmapFactory.decodeFile( picturePath ) );
-            bitmap = BitmapFactory.decodeFile( picturePath );
+            ImageView imageView = (ImageView) findViewById(R.id.image);
+            imageView.setImageBitmap(BitmapFactory.decodeFile(picturePath));
 
             //Setting the URI so we can read the Bitmap from the image
             imageView.setImageURI(null);
             imageView.setImageURI(selectedImage);
+
+
         }
     }
 
@@ -147,5 +160,4 @@ public class MainActivity extends AppCompatActivity {
         long declaredLength = fileDescriptor.getDeclaredLength();
         return fileChannel.map( FileChannel.MapMode.READ_ONLY, startOffset, declaredLength );
     }
-
 }
